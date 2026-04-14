@@ -19,6 +19,8 @@ services:
     environment:
       POLICY_ADMIT_SIZE_THRESHOLD_BYTES: "67108864"
       POLICY_ADMIT_FREQUENCY_THRESHOLD: "3"
+      POLICY_LRU_RECENCY_THRESHOLD_SECONDS: "60"
+      POLICY_ML_SCORE_THRESHOLD: "0.55"
     ports:
       - "8001:8001"
     healthcheck:
@@ -43,10 +45,10 @@ services:
     networks:
       - warehouse-net
 
-  compute-worker:
+  compute-worker-1:
     build:
       context: ./services/compute-worker
-    container_name: compute-worker
+    container_name: compute-worker-1
     depends_on:
       redis:
         condition: service_healthy
@@ -60,8 +62,10 @@ services:
       TELEMETRY_COLLECTOR_URL: http://telemetry-collector:8002
       OBJECT_STORE_ROOT: /data/object-store
       CACHE_ROOT: /data/cache
-    ports:
-      - "8000:8000"
+      CACHE_CAPACITY_BYTES: "134217728"
+      CACHE_EVICTION_POLICY: lru
+      POLICY_NAME: baseline-lru
+      WORKER_ID: worker-1
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 5s
@@ -69,7 +73,94 @@ services:
       retries: 10
     volumes:
       - ./data/object-store:/data/object-store
-      - ./data/cache/compute-worker:/data/cache
+      - ./data/cache/compute-worker-1:/data/cache
+    networks:
+      - warehouse-net
+
+  compute-worker-2:
+    build:
+      context: ./services/compute-worker
+    container_name: compute-worker-2
+    depends_on:
+      redis:
+        condition: service_healthy
+      policy-engine:
+        condition: service_healthy
+      telemetry-collector:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POLICY_ENGINE_URL: http://policy-engine:8001
+      TELEMETRY_COLLECTOR_URL: http://telemetry-collector:8002
+      OBJECT_STORE_ROOT: /data/object-store
+      CACHE_ROOT: /data/cache
+      CACHE_CAPACITY_BYTES: "134217728"
+      CACHE_EVICTION_POLICY: lru
+      POLICY_NAME: baseline-lru
+      WORKER_ID: worker-2
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - ./data/object-store:/data/object-store
+      - ./data/cache/compute-worker-2:/data/cache
+    networks:
+      - warehouse-net
+
+  compute-worker-3:
+    build:
+      context: ./services/compute-worker
+    container_name: compute-worker-3
+    depends_on:
+      redis:
+        condition: service_healthy
+      policy-engine:
+        condition: service_healthy
+      telemetry-collector:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POLICY_ENGINE_URL: http://policy-engine:8001
+      TELEMETRY_COLLECTOR_URL: http://telemetry-collector:8002
+      OBJECT_STORE_ROOT: /data/object-store
+      CACHE_ROOT: /data/cache
+      CACHE_CAPACITY_BYTES: "134217728"
+      CACHE_EVICTION_POLICY: lru
+      POLICY_NAME: baseline-lru
+      WORKER_ID: worker-3
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - ./data/object-store:/data/object-store
+      - ./data/cache/compute-worker-3:/data/cache
+    networks:
+      - warehouse-net
+
+  request-router:
+    build:
+      context: ./services/request-router
+    container_name: request-router
+    depends_on:
+      compute-worker-1:
+        condition: service_healthy
+      compute-worker-2:
+        condition: service_healthy
+      compute-worker-3:
+        condition: service_healthy
+    environment:
+      ROUTER_WORKERS: worker-1=http://compute-worker-1:8000,worker-2=http://compute-worker-2:8000,worker-3=http://compute-worker-3:8000
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     networks:
       - warehouse-net
 
@@ -78,15 +169,17 @@ services:
       context: ./services/workload-generator
     container_name: workload-generator
     depends_on:
-      compute-worker:
+      request-router:
         condition: service_healthy
     environment:
-      COMPUTE_WORKER_URL: http://compute-worker:8000
+      ROUTER_URL: http://request-router:8000
       TRACE_FILE: /app/traces/sample-trace.jsonl
+      WORKLOAD_CONFIG_FILE: /app/configs/default-workload.json
       WORKLOAD_CONCURRENCY: "8"
-      WORKLOAD_REPEAT: "2"
+      WORKLOAD_SEED: "7"
     volumes:
       - ./traces:/app/traces:ro
+      - ./configs:/app/configs:ro
     networks:
       - warehouse-net
 

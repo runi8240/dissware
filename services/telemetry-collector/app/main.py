@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class TelemetryEvent(BaseModel):
     segment_id: str
+    worker_id: str
     metadata_hit: bool
     source: Literal["cache", "object-store"]
     placement_decision: Literal["Admit", "Retain", "Evict", "Hit"]
@@ -17,6 +18,10 @@ class TelemetryEvent(BaseModel):
     latency_ms: float = Field(..., ge=0)
     frequency: int = Field(..., ge=1)
     recency_seconds: int = Field(..., ge=0)
+    query_type: str | None = None
+    object_class: str | None = None
+    workload_phase: str | None = None
+    semantic_tags: list[str] = Field(default_factory=list)
 
 
 app = FastAPI(title="telemetry-collector")

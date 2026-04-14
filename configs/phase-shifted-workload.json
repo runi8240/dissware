@@ -1,0 +1,58 @@
+{
+  "mode": "phase-shifted",
+  "seed": 13,
+  "concurrency": 8,
+  "repeat": 1,
+  "segments": [
+    {
+      "segment_id": "segment-a",
+      "size_bytes": 1048576,
+      "weight": 3,
+      "query_type": "scan",
+      "object_class": "fact",
+      "semantic_tags": ["sales"]
+    },
+    {
+      "segment_id": "segment-b",
+      "size_bytes": 73400320,
+      "weight": 2,
+      "query_type": "lookup",
+      "object_class": "dimension",
+      "semantic_tags": ["customer"]
+    },
+    {
+      "segment_id": "segment-c",
+      "size_bytes": 2097152,
+      "weight": 3,
+      "query_type": "join",
+      "object_class": "aggregate",
+      "semantic_tags": ["daily-rollup"]
+    }
+  ],
+  "phases": [
+    {
+      "name": "phase-1",
+      "requests": 12,
+      "hotset": ["segment-a"],
+      "boost": 6,
+      "query_type_override": "scan",
+      "semantic_tags": ["morning"]
+    },
+    {
+      "name": "phase-2",
+      "requests": 12,
+      "hotset": ["segment-c"],
+      "boost": 6,
+      "query_type_override": "join",
+      "semantic_tags": ["afternoon"]
+    },
+    {
+      "name": "phase-3",
+      "requests": 12,
+      "hotset": ["segment-b"],
+      "boost": 6,
+      "query_type_override": "lookup",
+      "semantic_tags": ["evening"]
+    }
+  ]
+}

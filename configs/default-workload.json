@@ -1,0 +1,49 @@
+{
+  "mode": "stationary",
+  "seed": 7,
+  "concurrency": 8,
+  "requests": 24,
+  "repeat": 1,
+  "segments": [
+    {
+      "segment_id": "segment-a",
+      "size_bytes": 1048576,
+      "weight": 5,
+      "query_type": "scan",
+      "object_class": "fact",
+      "semantic_tags": ["hot", "sales"]
+    },
+    {
+      "segment_id": "segment-b",
+      "size_bytes": 73400320,
+      "weight": 1,
+      "query_type": "lookup",
+      "object_class": "dimension",
+      "semantic_tags": ["cold", "customer"]
+    },
+    {
+      "segment_id": "segment-c",
+      "size_bytes": 2097152,
+      "weight": 4,
+      "query_type": "join",
+      "object_class": "aggregate",
+      "semantic_tags": ["warm", "daily-rollup"]
+    }
+  ],
+  "phases": [
+    {
+      "name": "steady",
+      "requests": 24,
+      "hotset": ["segment-a", "segment-c"],
+      "boost": 3,
+      "semantic_tags": ["steady-state"],
+      "active_workers": 1
+    }
+  ],
+  "burst": {
+    "every_n_requests": 10,
+    "burst_length": 3,
+    "hotset": ["segment-a"],
+    "semantic_tags": ["burst-window"]
+  }
+}
