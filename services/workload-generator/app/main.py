@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 
 ROUTER_URL = os.getenv("ROUTER_URL", "http://localhost:8000")
+TELEMETRY_URL = os.getenv("TELEMETRY_URL", "http://localhost:8002")
 TRACE_FILE = Path(os.getenv("TRACE_FILE", "./traces/sample-trace.jsonl"))
 WORKLOAD_CONFIG_FILE = Path(os.getenv("WORKLOAD_CONFIG_FILE", "/app/configs/default-workload.json"))
 WORKLOAD_CONCURRENCY = int(os.getenv("WORKLOAD_CONCURRENCY", "8"))
@@ -183,8 +184,6 @@ def generate_scale_event(config: WorkloadConfig, rng: random.Random) -> list[Tra
     entries: list[TraceEntry] = []
     for phase in config.phases:
         phase_tags = ["mode:scale-event"] + phase.semantic_tags
-        if phase.active_workers is not None:
-            phase_tags.append(f"scale-workers:{phase.active_workers}")
         segments, weights = weighted_segments(config.segments, phase.hotset, hotset_boost=phase.boost)
         for _ in range(phase.requests):
             segment = rng.choices(segments, weights=weights, k=1)[0]
@@ -195,7 +194,6 @@ def generate_scale_event(config: WorkloadConfig, rng: random.Random) -> list[Tra
                     rng=rng,
                     extra_tags=phase_tags,
                     query_type_override=phase.query_type_override,
-                    active_workers=phase.active_workers,
                 )
             )
     return entries
@@ -225,6 +223,25 @@ async def send_request(client: httpx.AsyncClient, semaphore: asyncio.Semaphore, 
         }
 
 
+async def reset_telemetry(client: httpx.AsyncClient) -> None:
+    await client.post(f"{TELEMETRY_URL}/reset")
+
+
+async def scale_router(client: httpx.AsyncClient, active_worker_count: int, reason: str) -> dict[str, object]:
+    response = await client.post(
+        f"{ROUTER_URL}/admin/scale",
+        json={"active_worker_count": active_worker_count, "reason": reason},
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+async def fetch_telemetry_summary(client: httpx.AsyncClient) -> dict[str, object]:
+    response = await client.get(f"{TELEMETRY_URL}/summary")
+    response.raise_for_status()
+    return response.json()
+
+
 def summarize_requests(entries: list[TraceEntry]) -> dict[str, object]:
     phase_counts = Counter(entry.workload_phase or "unknown" for entry in entries)
     query_types = Counter(entry.query_type or "unknown" for entry in entries)
@@ -248,15 +265,31 @@ async def main() -> None:
     semaphore = asyncio.Semaphore(concurrency)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        results = await asyncio.gather(
-            *(send_request(client, semaphore, entry) for entry in entries)
-        )
+        await reset_telemetry(client)
+
+        if config.mode == "scale-event" and config.phases:
+            results: list[dict[str, object]] = []
+            for phase in config.phases:
+                phase_entries = [entry for entry in entries if entry.workload_phase == phase.name]
+                target_workers = phase.active_workers or 1
+                await scale_router(client, target_workers, reason=f"phase:{phase.name}")
+                phase_results = await asyncio.gather(
+                    *(send_request(client, semaphore, entry) for entry in phase_entries)
+                )
+                results.extend(phase_results)
+        else:
+            results = await asyncio.gather(
+                *(send_request(client, semaphore, entry) for entry in entries)
+            )
 
     successes = [result for result in results if result["status_code"] == 200]
     failures = [result for result in results if result["status_code"] != 200]
     average_latency_ms = (
         sum(float(result["latency_ms"]) for result in results) / len(results) if results else 0.0
     )
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        telemetry_summary = await fetch_telemetry_summary(client)
 
     print(
         json.dumps(
@@ -269,6 +302,7 @@ async def main() -> None:
                 "failed_requests": len(failures),
                 "average_latency_ms": round(average_latency_ms, 3),
                 "request_mix": summarize_requests(entries),
+                "telemetry_summary": telemetry_summary,
                 "sample_request": entries[0].model_dump() if entries else None,
                 "sample_response": successes[0]["response"] if successes else None,
             },

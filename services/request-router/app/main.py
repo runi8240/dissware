@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import os
 from contextlib import asynccontextmanager
+from typing import Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -31,6 +32,11 @@ class ReadRequest(BaseModel):
     semantic_tags: list[str] = Field(default_factory=list)
 
 
+class ScaleRequest(BaseModel):
+    active_worker_count: int = Field(..., ge=1)
+    reason: str | None = None
+
+
 def parse_workers() -> list[WorkerTarget]:
     workers: list[WorkerTarget] = []
     for token in ROUTER_WORKERS.split(","):
@@ -44,7 +50,7 @@ def parse_workers() -> list[WorkerTarget]:
     return workers
 
 
-def active_worker_count(tags: list[str], max_workers: int) -> int:
+def active_worker_count(tags: list[str], max_workers: int) -> int | None:
     for tag in tags:
         if tag.startswith("active-workers:"):
             _, raw_count = tag.split(":", maxsplit=1)
@@ -53,7 +59,7 @@ def active_worker_count(tags: list[str], max_workers: int) -> int:
             except ValueError:
                 continue
             return max(1, min(max_workers, requested))
-    return max_workers
+    return None
 
 
 def choose_worker(segment_id: str, workers: list[WorkerTarget], replicas: int = 64) -> WorkerTarget:
@@ -72,6 +78,8 @@ def choose_worker(segment_id: str, workers: list[WorkerTarget], replicas: int = 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.workers = parse_workers()
+    app.state.active_worker_count = len(app.state.workers)
+    app.state.scale_events: list[dict[str, object]] = []
     app.state.http_client = httpx.AsyncClient(timeout=10.0)
     try:
         yield
@@ -85,7 +93,11 @@ app = FastAPI(title="request-router", lifespan=lifespan)
 @app.get("/health")
 async def healthcheck() -> dict[str, object]:
     workers: list[WorkerTarget] = app.state.workers
-    return {"status": "ok", "workers": [worker.worker_id for worker in workers]}
+    return {
+        "status": "ok",
+        "workers": [worker.worker_id for worker in workers],
+        "active_worker_count": app.state.active_worker_count,
+    }
 
 
 @app.get("/ring")
@@ -94,6 +106,25 @@ async def ring() -> dict[str, object]:
     return {
         "workers": [worker.model_dump() for worker in workers],
         "replicas_per_worker": 64,
+        "active_worker_count": app.state.active_worker_count,
+        "scale_events": app.state.scale_events,
+    }
+
+
+@app.post("/admin/scale")
+async def scale_workers(request: ScaleRequest) -> dict[str, object]:
+    workers: list[WorkerTarget] = app.state.workers
+    app.state.active_worker_count = max(1, min(len(workers), request.active_worker_count))
+    app.state.scale_events.append(
+        {
+            "active_worker_count": app.state.active_worker_count,
+            "reason": request.reason or "manual",
+        }
+    )
+    return {
+        "status": "ok",
+        "active_worker_count": app.state.active_worker_count,
+        "active_workers": [worker.worker_id for worker in workers[: app.state.active_worker_count]],
     }
 
 
@@ -101,7 +132,8 @@ async def ring() -> dict[str, object]:
 async def route_read(request: ReadRequest) -> dict[str, object]:
     workers: list[WorkerTarget] = app.state.workers
     http_client: httpx.AsyncClient = app.state.http_client
-    active_count = active_worker_count(request.semantic_tags, len(workers))
+    requested_active_count = active_worker_count(request.semantic_tags, len(workers))
+    active_count = requested_active_count or app.state.active_worker_count
     active_workers = workers[:active_count]
     worker = choose_worker(request.segment_id, active_workers)
 

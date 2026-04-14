@@ -21,6 +21,9 @@ services:
       POLICY_ADMIT_FREQUENCY_THRESHOLD: "3"
       POLICY_LRU_RECENCY_THRESHOLD_SECONDS: "60"
       POLICY_ML_SCORE_THRESHOLD: "0.55"
+      POLICY_ML_MODEL_PATH: /app/models/logreg_reuse_model.joblib
+      POLICY_ML_REUSE_HORIZON_REQUESTS: "5"
+      POLICY_ML_FEATURE_SET: ${POLICY_ML_FEATURE_SET:-set-b}
     ports:
       - "8001:8001"
     healthcheck:
@@ -28,6 +31,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    volumes:
+      - ./models:/app/models
     networks:
       - warehouse-net
 
@@ -63,9 +68,13 @@ services:
       OBJECT_STORE_ROOT: /data/object-store
       CACHE_ROOT: /data/cache
       CACHE_CAPACITY_BYTES: "134217728"
-      CACHE_EVICTION_POLICY: lru
-      POLICY_NAME: baseline-lru
+      CACHE_EVICTION_POLICY: ${CACHE_EVICTION_POLICY:-lru}
+      POLICY_NAME: ${POLICY_NAME:-baseline-lru}
       WORKER_ID: worker-1
+      OBJECT_STORE_BASE_LATENCY_MS: "25.0"
+      OBJECT_STORE_MB_PER_SEC: "120.0"
+      TRANSFER_COST_PER_MB: "0.00002"
+      TRAINING_LOG_DIR: /data/training
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 5s
@@ -74,6 +83,7 @@ services:
     volumes:
       - ./data/object-store:/data/object-store
       - ./data/cache/compute-worker-1:/data/cache
+      - ./training-data:/data/training
     networks:
       - warehouse-net
 
@@ -95,9 +105,13 @@ services:
       OBJECT_STORE_ROOT: /data/object-store
       CACHE_ROOT: /data/cache
       CACHE_CAPACITY_BYTES: "134217728"
-      CACHE_EVICTION_POLICY: lru
-      POLICY_NAME: baseline-lru
+      CACHE_EVICTION_POLICY: ${CACHE_EVICTION_POLICY:-lru}
+      POLICY_NAME: ${POLICY_NAME:-baseline-lru}
       WORKER_ID: worker-2
+      OBJECT_STORE_BASE_LATENCY_MS: "25.0"
+      OBJECT_STORE_MB_PER_SEC: "120.0"
+      TRANSFER_COST_PER_MB: "0.00002"
+      TRAINING_LOG_DIR: /data/training
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 5s
@@ -106,6 +120,7 @@ services:
     volumes:
       - ./data/object-store:/data/object-store
       - ./data/cache/compute-worker-2:/data/cache
+      - ./training-data:/data/training
     networks:
       - warehouse-net
 
@@ -127,9 +142,13 @@ services:
       OBJECT_STORE_ROOT: /data/object-store
       CACHE_ROOT: /data/cache
       CACHE_CAPACITY_BYTES: "134217728"
-      CACHE_EVICTION_POLICY: lru
-      POLICY_NAME: baseline-lru
+      CACHE_EVICTION_POLICY: ${CACHE_EVICTION_POLICY:-lru}
+      POLICY_NAME: ${POLICY_NAME:-baseline-lru}
       WORKER_ID: worker-3
+      OBJECT_STORE_BASE_LATENCY_MS: "25.0"
+      OBJECT_STORE_MB_PER_SEC: "120.0"
+      TRANSFER_COST_PER_MB: "0.00002"
+      TRAINING_LOG_DIR: /data/training
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
       interval: 5s
@@ -138,6 +157,18 @@ services:
     volumes:
       - ./data/object-store:/data/object-store
       - ./data/cache/compute-worker-3:/data/cache
+      - ./training-data:/data/training
+    networks:
+      - warehouse-net
+
+  model-trainer:
+    build:
+      context: ./training
+    container_name: model-trainer
+    volumes:
+      - ./training:/app/training
+      - ./training-data:/app/training-data
+      - ./models:/app/models
     networks:
       - warehouse-net
 
@@ -173,6 +204,7 @@ services:
         condition: service_healthy
     environment:
       ROUTER_URL: http://request-router:8000
+      TELEMETRY_URL: http://telemetry-collector:8002
       TRACE_FILE: /app/traces/sample-trace.jsonl
       WORKLOAD_CONFIG_FILE: /app/configs/default-workload.json
       WORKLOAD_CONCURRENCY: "8"
