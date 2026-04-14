@@ -1,0 +1,95 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ds-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - warehouse-net
+
+  policy-engine:
+    build:
+      context: ./services/policy-engine
+    container_name: policy-engine
+    environment:
+      POLICY_ADMIT_SIZE_THRESHOLD_BYTES: "67108864"
+      POLICY_ADMIT_FREQUENCY_THRESHOLD: "3"
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - warehouse-net
+
+  telemetry-collector:
+    build:
+      context: ./services/telemetry-collector
+    container_name: telemetry-collector
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - warehouse-net
+
+  compute-worker:
+    build:
+      context: ./services/compute-worker
+    container_name: compute-worker
+    depends_on:
+      redis:
+        condition: service_healthy
+      policy-engine:
+        condition: service_healthy
+      telemetry-collector:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POLICY_ENGINE_URL: http://policy-engine:8001
+      TELEMETRY_COLLECTOR_URL: http://telemetry-collector:8002
+      OBJECT_STORE_ROOT: /data/object-store
+      CACHE_ROOT: /data/cache
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - ./data/object-store:/data/object-store
+      - ./data/cache/compute-worker:/data/cache
+    networks:
+      - warehouse-net
+
+  workload-generator:
+    build:
+      context: ./services/workload-generator
+    container_name: workload-generator
+    depends_on:
+      compute-worker:
+        condition: service_healthy
+    environment:
+      COMPUTE_WORKER_URL: http://compute-worker:8000
+      TRACE_FILE: /app/traces/sample-trace.jsonl
+      WORKLOAD_CONCURRENCY: "8"
+      WORKLOAD_REPEAT: "2"
+    volumes:
+      - ./traces:/app/traces:ro
+    networks:
+      - warehouse-net
+
+networks:
+  warehouse-net:
+    driver: bridge

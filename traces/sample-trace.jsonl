@@ -1,0 +1,6 @@
+{"segment_id":"segment-a","size_bytes":1048576,"frequency":5,"recency_seconds":10}
+{"segment_id":"segment-b","size_bytes":73400320,"frequency":1,"recency_seconds":500}
+{"segment_id":"segment-a","size_bytes":1048576,"frequency":6,"recency_seconds":8}
+{"segment_id":"segment-c","size_bytes":2097152,"frequency":4,"recency_seconds":20}
+{"segment_id":"segment-b","size_bytes":73400320,"frequency":1,"recency_seconds":490}
+{"segment_id":"segment-c","size_bytes":2097152,"frequency":5,"recency_seconds":15}
