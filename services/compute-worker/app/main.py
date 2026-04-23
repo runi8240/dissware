@@ -11,6 +11,7 @@ from typing import Literal
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from google.cloud import storage
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 
@@ -19,7 +20,10 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 POLICY_ENGINE_URL = os.getenv("POLICY_ENGINE_URL", "http://localhost:8001")
 TELEMETRY_COLLECTOR_URL = os.getenv("TELEMETRY_COLLECTOR_URL", "http://localhost:8002")
 OBJECT_STORE_ROOT = Path(os.getenv("OBJECT_STORE_ROOT", "./data/object-store"))
+OBJECT_STORE_BUCKET = os.getenv("OBJECT_STORE_BUCKET", "").strip()
+OBJECT_STORE_PREFIX = os.getenv("OBJECT_STORE_PREFIX", "").strip().strip("/")
 CACHE_ROOT = Path(os.getenv("CACHE_ROOT", "./data/cache"))
+OBJECT_STORE_STAGING_ROOT = Path(os.getenv("OBJECT_STORE_STAGING_ROOT", "/tmp/object-store-staging"))
 CACHE_CAPACITY_BYTES = int(os.getenv("CACHE_CAPACITY_BYTES", str(128 * 1024 * 1024)))
 CACHE_EVICTION_POLICY = os.getenv("CACHE_EVICTION_POLICY", "lru").lower()
 POLICY_NAME = os.getenv("POLICY_NAME", "baseline-lru")
@@ -369,11 +373,14 @@ class CacheManager:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    OBJECT_STORE_ROOT.mkdir(parents=True, exist_ok=True)
     CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     TRAINING_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    OBJECT_STORE_STAGING_ROOT.mkdir(parents=True, exist_ok=True)
+    if not OBJECT_STORE_BUCKET:
+        OBJECT_STORE_ROOT.mkdir(parents=True, exist_ok=True)
     app.state.redis = Redis.from_url(REDIS_URL, decode_responses=True)
     app.state.http_client = httpx.AsyncClient(timeout=5.0)
+    app.state.storage_client = storage.Client() if OBJECT_STORE_BUCKET else None
     app.state.training_log_path = TRAINING_LOG_DIR / f"{WORKER_ID}.jsonl"
     app.state.training_log_lock = asyncio.Lock()
     app.state.inflight_requests: dict[str, asyncio.Future[ReadResponse]] = {}
@@ -432,16 +439,52 @@ def object_store_path(segment_id: str) -> Path:
     return OBJECT_STORE_ROOT / f"{segment_id}.bin"
 
 
+def object_store_object_name(segment_id: str) -> str:
+    filename = f"{segment_id}.bin"
+    return f"{OBJECT_STORE_PREFIX}/{filename}" if OBJECT_STORE_PREFIX else filename
+
+
+def object_store_staging_path(segment_id: str) -> Path:
+    return OBJECT_STORE_STAGING_ROOT / f"{segment_id}.bin"
+
+
 def cache_path(segment_id: str) -> Path:
     return CACHE_ROOT / f"{segment_id}.bin"
+
+
+def build_mock_payload(segment_id: str, size_bytes: int) -> bytes:
+    payload = (f"mock-segment:{segment_id}|".encode()) * max(1, size_bytes // max(1, len(segment_id) + 14))
+    return payload[:size_bytes] or b"x"
 
 
 def ensure_mock_segment(segment_id: str, size_bytes: int) -> Path:
     path = object_store_path(segment_id)
     if not path.exists():
-        payload = (f"mock-segment:{segment_id}|".encode()) * max(1, size_bytes // max(1, len(segment_id) + 14))
-        path.write_bytes(payload[:size_bytes] or b"x")
+        path.write_bytes(build_mock_payload(segment_id, size_bytes))
     return path
+
+
+def _materialize_segment_from_gcs(segment_id: str, size_bytes: int) -> tuple[Path, int]:
+    storage_client: storage.Client = app.state.storage_client
+    if storage_client is None:
+        raise RuntimeError("GCS client requested but OBJECT_STORE_BUCKET is not configured")
+
+    bucket = storage_client.bucket(OBJECT_STORE_BUCKET)
+    blob = bucket.blob(object_store_object_name(segment_id))
+    if not blob.exists():
+        blob.upload_from_string(build_mock_payload(segment_id, size_bytes), content_type="application/octet-stream")
+
+    destination = object_store_staging_path(segment_id)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    blob.download_to_filename(destination)
+    return destination, int(destination.stat().st_size)
+
+
+async def materialize_object_store_segment(segment_id: str, size_bytes: int) -> tuple[Path, int]:
+    if OBJECT_STORE_BUCKET:
+        return await asyncio.to_thread(_materialize_segment_from_gcs, segment_id, size_bytes)
+    path = ensure_mock_segment(segment_id, size_bytes)
+    return path, int(path.stat().st_size)
 
 
 def estimate_object_store_latency_ms(size_bytes: int) -> float:
@@ -750,8 +793,7 @@ async def read_segment(request: ReadRequest) -> ReadResponse:
 
     decision = PolicyDecisionResponse.model_validate(policy_response.json())
     object_fetch_started = time.perf_counter()
-    object_path = ensure_mock_segment(request.segment_id, request.size_bytes)
-    bytes_served = object_path.stat().st_size
+    object_path, bytes_served = await materialize_object_store_segment(request.segment_id, request.size_bytes)
     bytes_fetched_from_object_store = bytes_served
     object_fetch_ms = (time.perf_counter() - object_fetch_started) * 1000
 

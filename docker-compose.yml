@@ -66,6 +66,8 @@ services:
       POLICY_ENGINE_URL: http://policy-engine:8001
       TELEMETRY_COLLECTOR_URL: http://telemetry-collector:8002
       OBJECT_STORE_ROOT: /data/object-store
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-}
+      OBJECT_STORE_PREFIX: ${OBJECT_STORE_PREFIX:-}
       CACHE_ROOT: /data/cache
       CACHE_CAPACITY_BYTES: "134217728"
       CACHE_EVICTION_POLICY: ${CACHE_EVICTION_POLICY:-lru}
@@ -103,6 +105,8 @@ services:
       POLICY_ENGINE_URL: http://policy-engine:8001
       TELEMETRY_COLLECTOR_URL: http://telemetry-collector:8002
       OBJECT_STORE_ROOT: /data/object-store
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-}
+      OBJECT_STORE_PREFIX: ${OBJECT_STORE_PREFIX:-}
       CACHE_ROOT: /data/cache
       CACHE_CAPACITY_BYTES: "134217728"
       CACHE_EVICTION_POLICY: ${CACHE_EVICTION_POLICY:-lru}
@@ -140,6 +144,8 @@ services:
       POLICY_ENGINE_URL: http://policy-engine:8001
       TELEMETRY_COLLECTOR_URL: http://telemetry-collector:8002
       OBJECT_STORE_ROOT: /data/object-store
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-}
+      OBJECT_STORE_PREFIX: ${OBJECT_STORE_PREFIX:-}
       CACHE_ROOT: /data/cache
       CACHE_CAPACITY_BYTES: "134217728"
       CACHE_EVICTION_POLICY: ${CACHE_EVICTION_POLICY:-lru}
