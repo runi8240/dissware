@@ -1,0 +1,27 @@
+{
+  "output_model": "/app/models/logreg_set_b.joblib",
+  "metrics": {
+    "dataset_rows": 8352,
+    "train_rows": 6264,
+    "test_rows": 2088,
+    "accuracy": 0.5431,
+    "roc_auc": 0.5529,
+    "feature_set": "set-b",
+    "feature_names": [
+      "recency_seconds",
+      "frequency",
+      "inter_arrival_gap_seconds",
+      "rolling_hit_count",
+      "size_bytes",
+      "estimated_object_store_latency_ms",
+      "transfer_cost_proxy"
+    ],
+    "solver": "lbfgs",
+    "max_iter": 2000,
+    "c": 1.0,
+    "test_size": 0.25,
+    "seed": 7,
+    "model_family": "sklearn.linear_model.LogisticRegression",
+    "hardware_note": "CPU training via scikit-learn; Apple MPS is not used by this model."
+  }
+}
