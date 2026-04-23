@@ -180,8 +180,17 @@ def scale_event_plot() -> None:
 def ablation_plot() -> None:
     set_a = load_summary("ml_set_a_phase_shift.summary.json")
     set_b = load_summary("ml_set_b_phase_shift.summary.json")
-    coords_latency = f"(SetA,{set_a['average_latency_ms']}) (SetB,{set_b['average_latency_ms']})"
-    coords_hits = f"(SetA,{set_a['cache_hit_rate']}) (SetB,{set_b['cache_hit_rate']})"
+    set_c = load_summary("ml_set_c_phase_shift.summary.json")
+    coords_latency = (
+        f"(SetA,{set_a['average_latency_ms']}) "
+        f"(SetB,{set_b['average_latency_ms']}) "
+        f"(SetC,{set_c['average_latency_ms']})"
+    )
+    coords_hits = (
+        f"(SetA,{set_a['cache_hit_rate']}) "
+        f"(SetB,{set_b['cache_hit_rate']}) "
+        f"(SetC,{set_c['cache_hit_rate']})"
+    )
     content = rf"""
 \begin{{tikzpicture}}
 \begin{{axis}}[
@@ -192,7 +201,7 @@ def ablation_plot() -> None:
   ymin=0,
   ymax=4.2,
   ylabel={{Average latency (ms)}},
-  symbolic x coords={{SetA,SetB}},
+  symbolic x coords={{SetA,SetB,SetC}},
   xtick=data,
   nodes near coords,
   enlarge x limits=0.35
@@ -210,7 +219,7 @@ def ablation_plot() -> None:
   ymin=0,
   ymax=1.0,
   ylabel={{Cache hit rate}},
-  symbolic x coords={{SetA,SetB}},
+  symbolic x coords={{SetA,SetB,SetC}},
   xtick=data,
   nodes near coords,
   enlarge x limits=0.35
