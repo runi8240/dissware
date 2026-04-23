@@ -1,284 +1,291 @@
-# Local Simulation Progress Update
+# Local Simulation Status Update
 
 ## Overview
 
-This update documents the work completed so far for the fully local, containerized prototype of the elastic disaggregated data warehouse with predictive tiered storage. The current focus has been on establishing a clean monorepo structure, defining the Docker Compose topology, and implementing the initial service skeletons for the compute worker and policy engine.
+`local-sim/` is no longer just an initial scaffold. The current system is a runnable local simulation of an elastic disaggregated warehouse with:
 
-The result is a self-contained local simulation scaffold that can be run with Docker Compose and extended incrementally as more functionality is added.
+- a Redis-backed metadata layer
+- three cache-bearing compute workers
+- a request router with consistent hashing and scale controls
+- a telemetry collector with phase-aware summaries
+- a config-driven workload generator
+- an offline training pipeline for a logistic-regression admission policy
+- benchmark artifacts and preliminary results under `results/update2/`
 
-## What Has Been Built
+The prototype now supports end-to-end trace replay, cache admission experiments, worker scale events, telemetry collection, and offline ML model training.
 
-### 1. A Dedicated `local-sim/` Prototype Workspace
-
-The repository originally contained mostly paper and class project files. To avoid mixing runnable system code with the LaTeX and report artifacts, a dedicated `local-sim/` subdirectory was created. This keeps the simulation isolated and makes it easier to evolve independently.
-
-Current structure:
+## Current System Layout
 
 ```text
 local-sim/
 ├── docker-compose.yml
 ├── README.md
 ├── update.md
+├── configs/
+│   ├── default-workload.json
+│   ├── bursty-workload.json
+│   ├── phase-shifted-workload.json
+│   ├── scale-event-workload.json
+│   └── bench/
 ├── data/
 │   ├── object-store/
 │   └── cache/
-│       └── compute-worker/
+├── models/
 ├── services/
 │   ├── compute-worker/
-│   │   ├── Dockerfile
-│   │   ├── requirements.txt
-│   │   └── app/
-│   │       └── main.py
-│   └── policy-engine/
-│       ├── Dockerfile
-│       ├── requirements.txt
-│       └── app/
-│           └── main.py
-└── traces/
+│   ├── policy-engine/
+│   ├── request-router/
+│   ├── telemetry-collector/
+│   └── workload-generator/
+├── training/
+├── training-data/
+├── traces/
+└── results/update2/
 ```
 
-### 2. Docker Compose Topology
+## What Is Implemented Now
 
-A complete `docker-compose.yml` file was added to orchestrate the initial system locally. It defines three services on the same bridge network:
+### 1. Multi-service local deployment
+
+The Compose stack currently brings up:
 
 - `redis`
-  Acts as the metadata/directory service.
-
-- `compute-worker`
-  Accepts simulated read requests, checks metadata in Redis, determines whether the request is a cache hit or miss, and on a miss asks the policy engine for a placement decision.
-
 - `policy-engine`
-  Exposes a lightweight HTTP API that makes placement decisions using simple heuristics based on request features.
+- `telemetry-collector`
+- `compute-worker-1`
+- `compute-worker-2`
+- `compute-worker-3`
+- `request-router`
+- `model-trainer`
+- `workload-generator`
 
-The services share a single local Docker network named `warehouse-net`, which allows them to communicate by service name:
+Public ports:
 
-- `redis://redis:6379/0`
-- `http://policy-engine:8001`
+- router: `localhost:8000`
+- policy engine: `localhost:8001`
+- telemetry collector: `localhost:8002`
+- Redis: `localhost:6379`
 
-The Compose file also mounts host directories into the compute worker container:
+### 2. Request routing and elasticity controls
 
-- `./data/object-store` -> `/data/object-store`
-- `./data/cache/compute-worker` -> `/data/cache`
+The request router now sits in front of the workers and exposes:
 
-This simulates:
+- `GET /health`
+- `GET /ring`
+- `POST /read`
+- `POST /admin/scale`
 
-- a durable object-store backend using a local host directory
-- a worker-local cache using another mounted local directory
+It uses consistent hashing over `segment_id` to assign requests to workers. It also supports scale-event experiments by changing the active worker count during a run. The workload generator can trigger those changes phase by phase.
 
-### 3. Compute Worker Service Skeleton
+### 3. Compute workers with bounded local cache
 
-The compute worker FastAPI application was created in:
+Each compute worker now does more than simple hit/miss forwarding. It:
 
-- `local-sim/services/compute-worker/app/main.py`
+- checks Redis metadata for worker-local cache state
+- serves hits from a mounted local cache directory
+- fetches misses from the simulated object-store directory
+- calls the policy engine for admission decisions
+- enforces a byte-bounded cache capacity
+- supports multiple eviction policies:
+  - `lru`
+  - `lfu`
+  - `size-aware-lru`
+- tracks cache occupancy, turnover, evictions, duplicate fetches, and duplicate admits
+- appends per-request training logs under `training-data/`
 
-Its purpose is to simulate a worker node in the disaggregated warehouse. Right now it includes:
+Worker endpoints include:
 
-- a `GET /health` endpoint for basic health checking
-- a `POST /read` endpoint to simulate a data or segment access request
-- Redis integration for metadata lookup
-- async HTTP communication with the policy engine using `httpx`
-- mock object-store and cache file handling through mounted directories
+- `GET /health`
+- `GET /cache/state`
+- `POST /read`
 
-#### Request Model
+Admission policy selection is configurable with `POLICY_NAME`:
 
-The read endpoint accepts a request payload with:
+- `baseline-lru`
+- `baseline-lfu`
+- `baseline-size-aware`
+- `ml`
 
-- `segment_id`
-- `size_bytes`
-- `frequency`
-- `recency_seconds`
+### 4. Policy engine with heuristic and ML-backed admission
 
-These fields are enough to drive a first-pass placement decision and can later be extended with richer telemetry.
+The policy engine exposes:
 
-#### Current Read Flow
+- `GET /health`
+- `GET /policies`
+- `GET /ml/status`
+- `GET /ml/feature-sets`
+- `POST /decide`
 
-The current skeleton implements the following logic:
+It currently supports three heuristic baselines plus an ML policy:
 
-1. Receive a segment read request.
-2. Check Redis for metadata under a key like `segment:<segment_id>`.
-3. If Redis indicates the segment is cached and the local cache file exists:
-   - treat it as a cache hit
-   - increment a hit counter in Redis
-   - return a response indicating the data was served from cache
-4. If the metadata is missing or indicates the segment is not cached:
-   - treat it as a miss
-   - call the policy engine over HTTP
-   - create or fetch a mock segment in the object-store directory
-   - if the policy decision is `Admit`, copy the object-store file into the local cache directory
-   - update Redis metadata with the location and latest decision
-   - return a response showing the miss path and placement outcome
+- `baseline-lru`
+- `baseline-lfu`
+- `baseline-size-aware`
+- `ml`
 
-#### Metadata Representation
+The ML policy is formulated as binary classification:
 
-Redis is currently used as a simple hash-based directory. For each segment, the compute worker stores fields such as:
+> will this segment be reused within the next `H` requests?
 
-- `location`
-- `size_bytes`
-- `hits`
-- `last_decision`
+The default reuse horizon is `5` requests. If a trained model artifact is available, the policy engine loads an `sklearn` logistic-regression model from `models/`. If no artifact is present, it falls back to a deterministic score-based approximation with the same interface.
 
-This is intentionally minimal but matches the role of a directory service in the architecture.
+Current feature sets are defined explicitly:
 
-#### Mock Storage Behavior
+- `Set A`: `recency_seconds`, `frequency`, `inter_arrival_gap_seconds`, `rolling_hit_count`
+- `Set B`: Set A plus `size_bytes`, `estimated_object_store_latency_ms`, `transfer_cost_proxy`
+- `Set C`: Set B plus encoded `query_type`, `object_class`, and `workload_phase`
 
-The compute worker uses the local filesystem to simulate both object storage and the worker cache:
+### 5. Telemetry and experiment summaries
 
-- If a requested segment does not exist in the object-store directory, it creates a mock binary file.
-- If the policy engine returns `Admit`, the worker copies that file into the cache directory.
+The telemetry collector records per-request events and exposes:
 
-This gives a concrete local approximation of:
+- `GET /health`
+- `POST /events`
+- `POST /reset`
+- `GET /summary`
 
-- remote durable data in object storage
-- worker-local cached replicas
+Telemetry now includes:
 
-without requiring a real external object-store service yet.
+- cache hit rate and average latency
+- bytes served and object-store bytes fetched
+- policy inference, Redis lookup, object fetch, cache insert, eviction, and telemetry overhead
+- latest SSD occupancy, eviction count, and cache turnover
+- duplicate fetch and duplicate admit counters
+- per-phase summaries for workload experiments
+- recovery deltas for scale-out to post-scale transitions
 
-### 4. Policy Engine Service Skeleton
+### 6. Config-driven workload generation
 
-The policy engine FastAPI application was created in:
+The workload generator can replay synthetic request streams using JSON configs. Supported modes are:
 
-- `local-sim/services/policy-engine/app/main.py`
+- `stationary`
+- `bursty`
+- `phase-shifted`
+- `scale-event`
 
-It includes:
+These workloads vary hot sets, request mix, semantic tags, and active worker counts. Benchmark-sized configs are also present under `configs/bench/`.
 
-- a `GET /health` endpoint
-- a `POST /decide` endpoint
-- typed request and response schemas using Pydantic
+### 7. Offline training pipeline
 
-#### Current Policy Logic
+The training pipeline is already implemented:
 
-The current version implements a simple heuristic:
+1. Replay a workload and write per-request logs to `training-data/*.jsonl`.
+2. Build a labeled dataset with `training/build_training_dataset.py`.
+3. Train a logistic-regression classifier with `training/train_logreg.py`.
+4. Restart the policy engine to load the trained artifact.
 
-- Return `Admit` if:
-  - `frequency` is greater than or equal to the configured threshold, and
-  - `size_bytes` is less than or equal to the configured size threshold
-- Otherwise return `Retain`
+Artifacts already present under `models/` include trained models and metrics for:
 
-This is a deliberately lightweight starting point. It provides a stable contract between the compute worker and the policy engine while leaving room for more advanced heuristics or ML-driven logic later.
+- `logreg_set_a.joblib`
+- `logreg_set_b.joblib`
+- `logreg_set_c.joblib`
+- `logreg_reuse_model.joblib`
 
-#### Configuration
+Current metric files show that the trained models are not placeholders; they were produced from logged replay data. For example:
 
-The policy thresholds are configurable through environment variables:
+- `Set A`: accuracy `0.8896`, ROC AUC `0.5678`
+- `Set B`: accuracy `0.8896`, ROC AUC `0.6383`
+- `Set C`: accuracy `0.8742`, ROC AUC `0.6968`
 
-- `POLICY_ADMIT_SIZE_THRESHOLD_BYTES`
-- `POLICY_ADMIT_FREQUENCY_THRESHOLD`
+## Experimental Status
 
-This makes it easy to tune policy behavior without editing code.
+The repository now includes run summaries and a preliminary report under `results/update2/`. These artifacts show that the prototype has already been used for comparative experiments, not just service bring-up.
 
-### 5. Per-Service Container Definitions
+The available summaries cover:
 
-Each service has its own Dockerfile and Python dependency manifest.
+- stationary heuristic comparisons
+- phase-shifted workload comparisons
+- scale-event recovery experiments
+- ML feature-ablation comparisons
 
-#### Compute Worker Dependencies
+Examples already in the repo:
 
-The compute worker currently uses:
+- `heuristic_phase_shift.summary.json`
+- `heuristic_scale_event.summary.json`
+- `ml_set_b_phase_shift.summary.json`
+- `ml_set_b_scale_event.summary.json`
+- `lru_stationary.summary.json`
+- `lfu_stationary.summary.json`
+- `heuristic_stationary.summary.json`
 
-- `fastapi`
-- `uvicorn`
-- `httpx`
-- `redis[hiredis]`
-- `pydantic`
+The preliminary results document shows the main system claims are now empirically grounded:
 
-#### Policy Engine Dependencies
-
-The policy engine currently uses:
-
-- `fastapi`
-- `uvicorn`
-- `pydantic`
-
-Each Dockerfile is based on `python:3.11-slim` and runs the service via `uvicorn`.
-
-### 6. Basic Documentation
-
-A short `README.md` was added under `local-sim/` with:
-
-- the prototype layout
-- the basic startup command
-- the exposed service ports
-
-This provides an entry point for running the stack locally.
-
-## Validation Completed
-
-Two basic validation checks were run after scaffolding:
-
-### Python Syntax Validation
-
-Both service entrypoints were compiled with `python3 -m compileall`, which passed successfully. This confirms the initial Python files are syntactically valid.
-
-### Docker Compose Validation
-
-The Compose configuration was validated with:
-
-```bash
-docker compose -f local-sim/docker-compose.yml config
-```
-
-This also passed, confirming that the Compose file is structurally valid and resolves correctly.
+- simple heuristics behave similarly on stationary workloads
+- ML performs better than the heuristic in the hardest phase-shift segment of the tested run
+- both heuristic and ML show cold-start penalties during scale-out
+- feature ablation changes the latency and hit-rate tradeoff in measurable ways
 
 ## What the Current Prototype Demonstrates
 
-At this stage, the prototype already demonstrates the core control path of the target architecture:
+At this point, the local simulator demonstrates all of the following in one runnable workflow:
 
-- a request arrives at a compute worker
-- the worker consults the metadata/directory service
-- on a miss, the worker asks a separate policy engine for a placement decision
-- the worker reads from the durable base tier
-- the worker may populate its local cache based on policy
-- the worker updates metadata to reflect the current segment state
+- disaggregated control flow between router, workers, policy engine, telemetry, and Redis
+- worker-local caching over a shared object-store base tier
+- configurable admission and eviction policies
+- end-to-end trace-driven experiments
+- worker scale-out and scale-in behavior
+- telemetry-backed evaluation
+- offline supervised training for a predictive admission policy
+- saved benchmark outputs and plot inputs for reports
 
-This means the foundational service boundaries and communication patterns are now in place.
+## Remaining Gaps
 
-## What Is Still Missing
+The system is significantly more complete than the earlier scaffold, but it is still a prototype. Important limitations remain:
 
-The current implementation is intentionally skeletal. The following major pieces are not yet built:
+- the object store is still simulated with local files rather than a real remote store
+- benchmark results in `results/update2/` appear to be pilot runs, not repeated trials
+- the ML policy is still limited to logistic regression
+- there is no persistent experiment database or dashboard
+- fault injection and failure-recovery experiments are not yet implemented
+- the metadata layer is still centralized in a single Redis instance
 
-- workload generator for concurrent trace replay
-- telemetry collector service
-- explicit eviction logic
-- background cache management
-- richer metadata schema
-- multiple compute workers
-- realistic object-store fetch latency simulation
-- trace ingestion pipeline
-- metrics and observability
-- tests for the service APIs and end-to-end behavior
+## Current Run and Inspection Commands
 
-## Recommended Next Steps
-
-The most useful next additions would be:
-
-1. Add a workload generator that reads a trace and sends concurrent requests to the compute worker.
-2. Add a telemetry collector to record request latency, hit/miss outcomes, and policy decisions.
-3. Extend the policy engine so it can return `Evict` in addition to `Admit` and `Retain`.
-4. Add support for multiple compute workers in Docker Compose.
-5. Add a simple benchmark or experiment driver to measure cache hit rate and latency under different policy thresholds.
-
-## Current Run Command
-
-From the repository root:
+Bring up the stack:
 
 ```bash
-cd "local-sim"
 docker compose up --build
 ```
 
-This starts:
+Run the default workload:
 
-- Redis on port `6379`
-- Compute worker on port `8000`
-- Policy engine on port `8001`
+```bash
+docker compose run --rm workload-generator
+```
+
+Run a benchmark configuration:
+
+```bash
+docker compose run --rm -e WORKLOAD_CONFIG_FILE=/app/configs/bench/phase-shift-bench.json workload-generator
+```
+
+Inspect the router ring:
+
+```bash
+curl http://localhost:8000/ring
+```
+
+Inspect a worker cache state from inside the Compose network:
+
+```bash
+docker compose exec compute-worker-1 python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/cache/state').read().decode())"
+```
+
+Inspect policy status:
+
+```bash
+curl http://localhost:8001/ml/status
+curl http://localhost:8001/ml/feature-sets
+```
+
+Inspect telemetry summary:
+
+```bash
+curl http://localhost:8002/summary
+```
 
 ## Summary
 
-So far, the project has moved from a high-level architecture idea to an executable local scaffold with:
+The local simulation has progressed from an initial microservice scaffold into a working experimental platform. The codebase now supports multi-worker request routing, cache admission and eviction policies, telemetry collection, workload replay, elasticity experiments, and an offline-trained logistic-regression admission policy with saved benchmark artifacts.
 
-- a clean monorepo structure
-- container orchestration
-- a Redis-backed metadata service role
-- a compute worker microservice
-- a policy engine microservice
-- mock object-store and cache tiers using local mounted volumes
-
-The current code is not yet a full simulator, but it establishes the correct local architecture and a working control path that can now be extended into a more realistic trace-driven distributed systems prototype.
+The most accurate description of the current state is not "service skeletons" anymore. It is a functional local research prototype with enough implementation depth to run comparative systems experiments and produce report-ready results.
