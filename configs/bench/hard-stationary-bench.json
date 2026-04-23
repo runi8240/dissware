@@ -1,0 +1,105 @@
+{
+  "mode": "stationary",
+  "seed": 23,
+  "concurrency": 4,
+  "requests": 480,
+  "repeat": 1,
+  "segments": [
+    {
+      "segment_id": "seg-01",
+      "size_bytes": 6291456,
+      "weight": 10,
+      "query_type": "scan",
+      "object_class": "fact",
+      "semantic_tags": ["sales", "hot"]
+    },
+    {
+      "segment_id": "seg-02",
+      "size_bytes": 8388608,
+      "weight": 9,
+      "query_type": "scan",
+      "object_class": "fact",
+      "semantic_tags": ["inventory", "hot"]
+    },
+    {
+      "segment_id": "seg-03",
+      "size_bytes": 12582912,
+      "weight": 8,
+      "query_type": "join",
+      "object_class": "aggregate",
+      "semantic_tags": ["regional", "warm"]
+    },
+    {
+      "segment_id": "seg-04",
+      "size_bytes": 10485760,
+      "weight": 7,
+      "query_type": "lookup",
+      "object_class": "dimension",
+      "semantic_tags": ["customer", "warm"]
+    },
+    {
+      "segment_id": "seg-05",
+      "size_bytes": 16777216,
+      "weight": 6,
+      "query_type": "join",
+      "object_class": "fact",
+      "semantic_tags": ["finance", "warm"]
+    },
+    {
+      "segment_id": "seg-06",
+      "size_bytes": 18874368,
+      "weight": 5,
+      "query_type": "aggregate",
+      "object_class": "aggregate",
+      "semantic_tags": ["weekly", "warm"]
+    },
+    {
+      "segment_id": "seg-07",
+      "size_bytes": 20971520,
+      "weight": 4,
+      "query_type": "lookup",
+      "object_class": "dimension",
+      "semantic_tags": ["product", "cool"]
+    },
+    {
+      "segment_id": "seg-08",
+      "size_bytes": 23068672,
+      "weight": 4,
+      "query_type": "scan",
+      "object_class": "fact",
+      "semantic_tags": ["returns", "cool"]
+    },
+    {
+      "segment_id": "seg-09",
+      "size_bytes": 25165824,
+      "weight": 3,
+      "query_type": "join",
+      "object_class": "aggregate",
+      "semantic_tags": ["forecast", "cool"]
+    },
+    {
+      "segment_id": "seg-10",
+      "size_bytes": 29360128,
+      "weight": 2,
+      "query_type": "lookup",
+      "object_class": "dimension",
+      "semantic_tags": ["vendor", "cold"]
+    },
+    {
+      "segment_id": "seg-11",
+      "size_bytes": 33554432,
+      "weight": 2,
+      "query_type": "aggregate",
+      "object_class": "aggregate",
+      "semantic_tags": ["monthly", "cold"]
+    },
+    {
+      "segment_id": "seg-12",
+      "size_bytes": 37748736,
+      "weight": 1,
+      "query_type": "scan",
+      "object_class": "fact",
+      "semantic_tags": ["archive", "cold"]
+    }
+  ]
+}
