@@ -34,7 +34,7 @@ TRANSFER_COST_PER_MB = float(os.getenv("TRANSFER_COST_PER_MB", "0.00002"))
 TRAINING_LOG_DIR = Path(os.getenv("TRAINING_LOG_DIR", "/data/training"))
 
 SUPPORTED_CACHE_POLICIES = {"lru", "lfu", "size-aware-lru"}
-SUPPORTED_POLICY_NAMES = {"baseline-lru", "baseline-lfu", "baseline-size-aware", "ml"}
+SUPPORTED_POLICY_NAMES = {"baseline-lru", "baseline-lfu", "baseline-size-aware", "baseline-admit-all", "ml"}
 
 
 class ReadRequest(BaseModel):
@@ -49,7 +49,7 @@ class ReadRequest(BaseModel):
 
 
 class PolicyDecisionRequest(BaseModel):
-    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "ml"]
+    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "baseline-admit-all", "ml"]
     segment_id: str
     size_bytes: int
     frequency: int
@@ -66,7 +66,7 @@ class PolicyDecisionRequest(BaseModel):
 
 
 class PolicyDecisionResponse(BaseModel):
-    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "ml"]
+    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "baseline-admit-all", "ml"]
     action: Literal["admit", "retain", "evict"]
     score: float
     reason: str
@@ -115,7 +115,7 @@ class TrainingLogRecord(BaseModel):
     event_time_ns: int
     worker_id: str
     segment_id: str
-    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "ml"]
+    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "baseline-admit-all", "ml"]
     query_type: str | None = None
     object_class: str | None = None
     workload_phase: str | None = None

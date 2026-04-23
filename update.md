@@ -104,6 +104,7 @@ Admission policy selection is configurable with `POLICY_NAME`:
 - `baseline-lru`
 - `baseline-lfu`
 - `baseline-size-aware`
+- `baseline-admit-all`
 - `ml`
 
 ### 4. Policy engine with heuristic and ML-backed admission
@@ -121,6 +122,7 @@ It currently supports three heuristic baselines plus an ML policy:
 - `baseline-lru`
 - `baseline-lfu`
 - `baseline-size-aware`
+- `baseline-admit-all`
 - `ml`
 
 The ML policy is formulated as binary classification:

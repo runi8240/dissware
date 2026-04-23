@@ -53,7 +53,7 @@ The telemetry collector listens on `localhost:8002`.
 The compute worker now enforces a byte-bounded local cache. Configure it with
 `CACHE_CAPACITY_BYTES` and `CACHE_EVICTION_POLICY` (`lru`, `lfu`, or `size-aware-lru`).
 Admission policy selection is configured with `POLICY_NAME` and currently supports
-`baseline-lru`, `baseline-lfu`, `baseline-size-aware`, and `ml`.
+`baseline-lru`, `baseline-lfu`, `baseline-size-aware`, `baseline-admit-all`, and `ml`.
 The `ml` policy is now formulated as an `sklearn` logistic-regression classifier
 for the binary target: "will this segment be reused within horizon H?".
 The current default horizon is the next `5` requests, configured by

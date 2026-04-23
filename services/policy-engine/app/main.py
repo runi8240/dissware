@@ -19,7 +19,7 @@ ML_SCORE_THRESHOLD = float(os.getenv("POLICY_ML_SCORE_THRESHOLD", "0.55"))
 ML_MODEL_PATH = Path(os.getenv("POLICY_ML_MODEL_PATH", "/app/models/logreg_reuse_model.joblib"))
 ML_REUSE_HORIZON_REQUESTS = int(os.getenv("POLICY_ML_REUSE_HORIZON_REQUESTS", "5"))
 ML_FEATURE_SET = os.getenv("POLICY_ML_FEATURE_SET", "set-b").lower()
-SUPPORTED_POLICIES = {"baseline-lru", "baseline-lfu", "baseline-size-aware", "ml"}
+SUPPORTED_POLICIES = {"baseline-lru", "baseline-lfu", "baseline-size-aware", "baseline-admit-all", "ml"}
 FEATURE_SETS = {
     "set-a": [
         "recency_seconds",
@@ -67,7 +67,7 @@ WORKLOAD_PHASE_CODES = {
 
 
 class DecisionRequest(BaseModel):
-    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "ml"]
+    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "baseline-admit-all", "ml"]
     segment_id: str
     size_bytes: int = Field(..., gt=0)
     frequency: int = Field(..., ge=1)
@@ -84,7 +84,7 @@ class DecisionRequest(BaseModel):
 
 
 class DecisionResponse(BaseModel):
-    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "ml"]
+    policy_name: Literal["baseline-lru", "baseline-lfu", "baseline-size-aware", "baseline-admit-all", "ml"]
     action: Literal["admit", "retain", "evict"]
     score: float
     reason: str
@@ -158,6 +158,19 @@ def baseline_size_aware_policy(request: DecisionRequest) -> DecisionResponse:
         action=action,
         score=score,
         reason="Size-aware LRU balances recency against space amplification from larger segments.",
+    )
+
+
+def baseline_admit_all_policy(request: DecisionRequest) -> DecisionResponse:
+    fits_eventually = request.size_bytes <= request.cache_capacity_bytes
+    return DecisionResponse(
+        policy_name=request.policy_name,
+        action="admit" if fits_eventually else "retain",
+        score=1.0 if fits_eventually else 0.0,
+        reason=(
+            "Admit-all baseline admits every segment that can fit in cache, "
+            "forcing the worker cache manager to exercise replacement."
+        ),
     )
 
 
@@ -267,6 +280,7 @@ POLICY_HANDLERS = {
     "baseline-lru": baseline_lru_policy,
     "baseline-lfu": baseline_lfu_policy,
     "baseline-size-aware": baseline_size_aware_policy,
+    "baseline-admit-all": baseline_admit_all_policy,
     "ml": ml_policy,
 }
 
